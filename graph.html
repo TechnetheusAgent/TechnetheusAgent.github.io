@@ -201,6 +201,10 @@
                     <label for="derivPct">X%:</label>
                     <input type="number" id="derivPct" min="1" max="100" step="1" value="10" title="Cutoff for the Pred./Obs. Outliers buttons — top X% by movement.">
                 </div>
+                <div class="input-group">
+                    <label for="showAllDailyCheck">Daily WRs:</label>
+                    <input type="checkbox" id="showAllDailyCheck" style="width: auto;">
+                </div>
             </div>
         </div>
 
@@ -500,13 +504,13 @@
             if (focusIdx === -1 && visibleIndices.length === 1) focusIdx = visibleIndices[0];
 
             // 2. Slice dataset sections
-            // Layout: [0..Nc-1] base | [Nc..2Nc-1] lower cones | [2Nc..3Nc-1] upper cones | [3Nc] gap | [3Nc+1] skew | [3Nc+2] rawDaily
+            // Layout: [0..Nc-1] base | [Nc..2Nc-1] lower cones | [2Nc..3Nc-1] upper cones | [3Nc..4Nc-1] rawDailies | [4Nc] gap | [4Nc+1] skew
             const baseDatasets  = dsAll.slice(0, Nc);
             const lowerCones    = dsAll.slice(Nc, 2 * Nc);
             const upperCones    = dsAll.slice(2 * Nc, 3 * Nc);
-            const gapDs         = dsAll[3 * Nc];
-            const skewDs        = dsAll[3 * Nc + 1];
-            const rawDailyDs    = dsAll[3 * Nc + 2];
+            const rawDailyDss   = dsAll.slice(3 * Nc, 4 * Nc);
+            const gapDs         = dsAll[4 * Nc];
+            const skewDs        = dsAll[4 * Nc + 1];
 
             // 3. Apply line colors / weights
             baseDatasets.forEach((ds, i) => {
@@ -530,7 +534,7 @@
             });
 
             // 4. Per-character cones
-            // Always show focused char's cone. Show all visible chars' cones when count ? coneLimit.
+            // Always show focused char's cone. Show all visible chars' cones when count <= coneLimit.
             const coneLimit  = parseInt(document.getElementById('coneLimit').value) || 33;
             const multiCones = visibleIndices.length > 0 && visibleIndices.length <= coneLimit;
 
@@ -548,10 +552,41 @@
             }
 
             // 5. Mastery winrate gap / Meta advantage / Daily winrate overlays
-            // for focused character. Each point carries `delta` (the
-            // raw +/- value before chart-placement offset) so the
-            // tooltip can render the actual quantity rather than the
-            // line's plotted y-coordinate.
+            const showAllDaily = document.getElementById('showAllDailyCheck').checked;
+            for (let i = 0; i < Nc; i++) {
+                const isVisible = !dsAll[i].hidden;
+                const isFocused = (i === focusIdx);
+                const rdDs = rawDailyDss[i];
+                
+                if (isVisible && (isFocused || showAllDaily)) {
+                    rdDs.hidden = false;
+                    
+                    // Styling: match main character line behavior
+                    const baseDs = baseDatasets[i];
+                    const color = baseDs._origColor || baseDs.borderColor;
+                    if (focusIdx !== -1) {
+                        const fade = 'rgba(100,100,100,0.1)';
+                        rdDs.borderColor = isFocused ? color : fade;
+                        rdDs.pointBackgroundColor = isFocused ? color : fade;
+                        rdDs.pointBorderColor = isFocused ? color : fade;
+                        rdDs.borderWidth = isFocused ? 2 : 1;
+                    } else {
+                        rdDs.borderColor = color;
+                        rdDs.pointBackgroundColor = color;
+                        rdDs.pointBorderColor = color;
+                        rdDs.borderWidth = 1;
+                    }
+
+                    // Ensure data is synced (especially relevant after JS-side prediction/anchor scrubbing)
+                    rdDs.data = baseDs.data.map((pt, idx) => ({
+                        x: pt.x, 
+                        y: baseDs.rawDaily?.[idx] ?? null
+                    }));
+                } else {
+                    rdDs.hidden = true;
+                }
+            }
+
             if (focusIdx !== -1) {
                 const focusDs = baseDatasets[focusIdx];
                 gapDs.hidden  = false;
@@ -568,21 +603,9 @@
                     y: pt.y !== null && focusDs.skews?.[i] != null ? pt.y + focusDs.skews[i] : null,
                     delta: focusDs.skews?.[i] ?? null,
                 }));
-                // Daily winrate: dotted line in focused char's color.
-                // Plotted at the actual daily WR value (not an offset),
-                // so its tooltip y IS the value to display.
-                const focusColor = focusDs._origColor || focusDs.borderColor;
-                rawDailyDs.hidden = false;
-                rawDailyDs.label  = focusDs.label + ' [Daily winrate]';
-                rawDailyDs.borderColor = focusColor;
-                rawDailyDs.pointBackgroundColor = focusColor;
-                rawDailyDs.pointBorderColor = focusColor;
-                rawDailyDs.data = focusDs.data.map((pt, i) =>
-                    ({x: pt.x, y: focusDs.rawDaily?.[i] ?? null}));
             } else {
                 gapDs.hidden     = true;
                 skewDs.hidden    = true;
-                rawDailyDs.hidden = true;
             }
 
             // 6. Y-axis bounds (base lines only). Exclude the legend-
@@ -737,12 +760,26 @@
                 });
             });
 
-            // Context datasets for focused-character Gap and Skew overlays (at 3N, 3N+1).
-            // Three on-focus overlays share a common compact dotted style
-            // (dash [1,3], width 1, small points, no smoothing) so they
-            // read as secondary information against the primary line.
-            // Colors disambiguate: white = top-rank edge (mastery gap),
-            // black = matchup tilt (meta skew), char color = daily WR.
+            // Context datasets for focused-character Gap and Skew overlays (at 4N, 4N+1).
+            // Gap and Skew are unique singleton datasets that get swapped.
+            // RawDaily datasets are per-character (at 3N..4N-1).
+            masterDatasets.forEach((ds, i) => {
+                const raw = currentDatasets[i].rawDaily || [];
+                currentDatasets.push({
+                    label: ds.label + ' [Daily winrate]',
+                    _kind: 'rawDaily',
+                    _charIndex: i,
+                    data: raw.map((y, j) => ({x: currentLabels[j], y: y == null ? null : y})),
+                    borderColor: currentDatasets[i]._origColor || currentDatasets[i].borderColor,
+                    backgroundColor: 'rgba(0,0,0,0)',
+                    borderDash: [1, 3],
+                    borderWidth: 1,
+                    pointRadius: 2,
+                    hidden: true,
+                    tension: 0,
+                });
+            });
+
             currentDatasets.push({
                 label: 'Mastery winrate gap',
                 _kind: 'gap',
@@ -760,18 +797,6 @@
                 _kind: 'skew',
                 data: currentLabels.map(x => ({x, y: null})),
                 borderColor: '#000000',
-                backgroundColor: 'rgba(0,0,0,0)',
-                borderDash: [1, 3],
-                borderWidth: 1,
-                pointRadius: 2,
-                hidden: true,
-                tension: 0,
-            });
-            currentDatasets.push({
-                label: 'Daily winrate',
-                _kind: 'rawDaily',
-                data: currentLabels.map(x => ({x, y: null})),
-                borderColor: '#888888',
                 backgroundColor: 'rgba(0,0,0,0)',
                 borderDash: [1, 3],
                 borderWidth: 1,
@@ -801,8 +826,11 @@
                         let newHoverIdx = -1;
                         if (elements.length > 0) {
                             let dsIdx = elements[0].datasetIndex;
+                            const ds = currentDatasets[dsIdx];
                             if (dsIdx < masterDatasets.length) {
                                 newHoverIdx = dsIdx;
+                            } else if (ds && ds._kind === 'rawDaily') {
+                                newHoverIdx = ds._charIndex;
                             }
                         }
                         if (hoveredCharIndex !== newHoverIdx) {
@@ -945,6 +973,13 @@
                                     const ds = context.dataset;
                                     let label = ds.label || '';
                                     if (label.includes('_cone_')) return null;
+                                    
+                                    // Handle rawDaily tooltip by showing parent character name
+                                    if (ds._kind === 'rawDaily') {
+                                        const charDs = context.chart.data.datasets[ds._charIndex];
+                                        label = (charDs ? charDs.label : 'Character') + ' [Daily winrate]';
+                                    }
+                                    
                                     let lines = [];
 
                                     // Friendly labels for the three on-focus overlay lines.
@@ -964,7 +999,9 @@
                                     }
                                     if (ds._kind === 'rawDaily') {
                                         const v = context.parsed && context.parsed.y;
-                                        if (v != null) lines.push('Daily winrate: ' + v.toFixed(2) + '%');
+                                        const charDs = context.chart.data.datasets[ds._charIndex];
+                                        const charName = charDs ? charDs.label : 'Character';
+                                        if (v != null) lines.push(charName + ': ' + v.toFixed(2) + '% [Daily]');
                                         return lines;
                                     }
 
@@ -1100,6 +1137,7 @@
 
         document.getElementById('predDays').addEventListener('input', updateChart);
         document.getElementById('coneLimit').addEventListener('input', applyVisualState);
+        document.getElementById('showAllDailyCheck').addEventListener('change', applyVisualState);
         // Mode pickers (bucket × weighting). Swaps which (rank, weighting)
         // pair drives the rendered line and the prediction engine. All four
         // pairs are pre-rendered at generation time, so picker changes are pure
@@ -1147,7 +1185,69 @@
         let currentYMin = null;
         let currentYMax = null;
 
-        document.getElementById('rankChart').addEventListener('wheel', (e) => {
+        let isDragging = false;
+        let dragStartPos = { x: 0, y: 0 };
+        let dragStartIndices = { min: 0, max: 0 };
+        let dragStartYRange = { min: 0, max: 0 };
+
+        const canvas = document.getElementById('rankChart');
+        canvas.addEventListener('mousedown', (e) => {
+            if (!chartInstance) return;
+            const chartArea = chartInstance.chartArea;
+            if (!chartArea || e.offsetX < chartArea.left || e.offsetX > chartArea.right || e.offsetY < chartArea.top || e.offsetY > chartArea.bottom) return;
+
+            isDragging = true;
+            dragStartPos = { x: e.offsetX, y: e.offsetY };
+            dragStartIndices = { min: currentMinIdx, max: currentMaxIdx !== null ? currentMaxIdx : chartInstance.data.labels.length - 1 };
+            dragStartYRange = { 
+                min: currentYMin !== null ? currentYMin : chartInstance.scales.y.min, 
+                max: currentYMax !== null ? currentYMax : chartInstance.scales.y.max 
+            };
+            canvas.style.cursor = 'grabbing';
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isDragging || !chartInstance) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const offsetX = e.clientX - rect.left;
+            const offsetY = e.clientY - rect.top;
+
+            const chartArea = chartInstance.chartArea;
+            const dx = offsetX - dragStartPos.x;
+            const dy = offsetY - dragStartPos.y;
+
+            const totalLen = chartInstance.data.labels.length;
+            const visibleLen = dragStartIndices.max - dragStartIndices.min;
+            const pixelsPerIndex = (chartArea.right - chartArea.left) / visibleLen;
+            const indexShift = Math.round(dx / pixelsPerIndex);
+
+            currentMinIdx = Math.max(0, Math.min(totalLen - 1 - visibleLen, dragStartIndices.min - indexShift));
+            currentMaxIdx = Math.min(totalLen - 1, currentMinIdx + visibleLen);
+
+            const yRange = dragStartYRange.max - dragStartYRange.min;
+            const pixelsPerY = (chartArea.bottom - chartArea.top) / yRange;
+            const yShift = dy / pixelsPerY;
+
+            currentYMin = dragStartYRange.min + yShift;
+            currentYMax = dragStartYRange.max + yShift;
+
+            chartInstance.options.scales.x.min = chartInstance.data.labels[currentMinIdx];
+            chartInstance.options.scales.x.max = chartInstance.data.labels[currentMaxIdx];
+            chartInstance.options.scales.y.min = currentYMin;
+            chartInstance.options.scales.y.max = currentYMax;
+            
+            applyVisualState();
+        });
+
+        window.addEventListener('mouseup', () => {
+            if (isDragging) {
+                isDragging = false;
+                canvas.style.cursor = 'default';
+            }
+        });
+
+        canvas.addEventListener('wheel', (e) => {
             if (!chartInstance) return;
             e.preventDefault();
             
