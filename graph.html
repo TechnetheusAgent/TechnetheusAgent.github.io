@@ -119,6 +119,12 @@
             height: 70vh;
             width: 100%;
         }
+        .btn-active {
+            outline: 2px solid #f8fafc;
+            outline-offset: 2px;
+            box-shadow: 0 0 10px rgba(248, 250, 252, 0.4);
+            z-index: 1;
+        }
     </style>
 </head>
 <body>
@@ -270,6 +276,28 @@
         // any of {Vanq, All} × {Eq, Pr}, all pre-rendered server-side.
         let currentBucket = 'Vanq';
         let currentWeighting = 'Eq';
+
+        // Track active prefilter and manual legend overrides.
+        let activePrefilter = null; // 'rising' | 'falling' | 'predOut' | 'obsOut' | 'none'
+        const manualVisibility = new Map(); // charIndex -> bool (true=visible, false=hidden)
+
+        function updatePrefilterButtonStyles() {
+            const buttons = {
+                'rising': document.getElementById('showRisingBtn'),
+                'falling': document.getElementById('showFallingBtn'),
+                'predOut': document.getElementById('showPredOutliersBtn'),
+                'obsOut': document.getElementById('showObsOutliersBtn')
+            };
+            for (const [key, btn] of Object.entries(buttons)) {
+                if (activePrefilter === key) {
+                    btn.classList.add('btn-active');
+                    btn.style.opacity = '1';
+                } else {
+                    btn.classList.remove('btn-active');
+                    btn.style.opacity = activePrefilter && activePrefilter !== 'none' ? '0.4' : '1';
+                }
+            }
+        }
         function modeKey() { return currentBucket + currentWeighting; }
         function predictAllChars(anchor, days) {
             return predictAllCharsB(anchor, days);
@@ -902,11 +930,13 @@
                                     // Lock the preview as an explicit show.
                                     ci.data.datasets[index].hidden = false;
                                     ci.getDatasetMeta(index).hidden = false;
+                                    manualVisibility.set(index, true);
                                 } else {
                                     // Normal toggle from current visible state.
                                     const nowHidden = !ci.data.datasets[index].hidden;
                                     ci.data.datasets[index].hidden = nowHidden;
                                     ci.getDatasetMeta(index).hidden = nowHidden;
+                                    manualVisibility.set(index, !nowHidden);
                                 }
                                 applyVisualState();
                             },
@@ -1174,7 +1204,35 @@
                         if (ds.rawDaily.length > srcRaw.length) ds.rawDaily.length = srcRaw.length;
                     }
                 }
+                
+                // Sync the swapped master data into the active chart datasets before 
+                // re-applying filters, otherwise the filter logic (which reads from 
+                // chartInstance) or the visual render will still be using the old bucket's values.
                 updateChart();
+
+                // Re-apply prefilter if one is active.
+                if (activePrefilter === 'rising') toggleByTrend(true, true);
+                else if (activePrefilter === 'falling') toggleByTrend(false, true);
+                else if (activePrefilter === 'predOut') togglePredOutliers(true);
+                else if (activePrefilter === 'obsOut') toggleObsOutliers(true);
+                else {
+                    updatePrefilterButtonStyles();
+                    // If no prefilter, we still need to respect manual overrides
+                    // but characters not in manualVisibility might need default state?
+                    // Usually if no prefilter was active, and user just swapped buckets,
+                    // we keep whatever was there.
+                    if (manualVisibility.size > 0) {
+                        chartInstance.data.datasets.forEach((ds, i) => {
+                            if (i < masterDatasets.length && manualVisibility.has(i)) {
+                                ds.hidden = !manualVisibility.get(i);
+                                chartInstance.getDatasetMeta(i).hidden = ds.hidden;
+                            }
+                        });
+                    }
+                    // updateChart() already called above, but we need one final render
+                    // if we changed visibility in this branch.
+                    applyVisualState();
+                }
             }
             bucketSel.addEventListener('change', () => { currentBucket = bucketSel.value; applyMode(); });
             weightSel.addEventListener('change', () => { currentWeighting = weightSel.value; applyMode(); });
@@ -1309,6 +1367,9 @@
 
         document.getElementById('toggleAllBtn').addEventListener('click', () => {
             allHidden = !allHidden;
+            activePrefilter = 'none';
+            manualVisibility.clear();
+            updatePrefilterButtonStyles();
             document.getElementById('toggleAllBtn').innerText = allHidden ? "Show All Characters" : "Hide All Characters";
             chartInstance.data.datasets.forEach((ds, i) => {
                 if (i < masterDatasets.length) {
@@ -1319,12 +1380,22 @@
             applyVisualState();
         });
 
-        function toggleByTrend(isRising) {
+        function toggleByTrend(isRising, isReapply = false) {
+            if (!isReapply) {
+                activePrefilter = isRising ? 'rising' : 'falling';
+                manualVisibility.clear();
+            }
+            updatePrefilterButtonStyles();
             allHidden = false; 
             document.getElementById('toggleAllBtn').innerText = "Hide All Characters";
             
             chartInstance.data.datasets.forEach((ds, i) => {
                 if (i < masterDatasets.length) {
+                    if (manualVisibility.has(i)) {
+                        ds.hidden = !manualVisibility.get(i);
+                        chartInstance.getDatasetMeta(i).hidden = ds.hidden;
+                        return;
+                    }
                     const data = ds.data;
                     if (data.length > currentHistLen) {
                         const histLast = data[currentHistLen - 1] && data[currentHistLen - 1].y;
@@ -1357,7 +1428,12 @@
         }
         derivPctInput.addEventListener('input', updateOutlierLabels);
 
-        function togglePredOutliers() {
+        function togglePredOutliers(isReapply = false) {
+            if (!isReapply) {
+                activePrefilter = 'predOut';
+                manualVisibility.clear();
+            }
+            updatePrefilterButtonStyles();
             allHidden = false;
             document.getElementById('toggleAllBtn').innerText = "Hide All Characters";
             const xPct = parseFloat(derivPctInput.value) || 10;
@@ -1387,6 +1463,11 @@
             
             chartInstance.data.datasets.forEach((ds, i) => {
                 if (i < masterDatasets.length) {
+                    if (manualVisibility.has(i)) {
+                        ds.hidden = !manualVisibility.get(i);
+                        chartInstance.getDatasetMeta(i).hidden = ds.hidden;
+                        return;
+                    }
                     const isVisible = indicesToShow.has(i);
                     ds.hidden = !isVisible;
                     chartInstance.getDatasetMeta(i).hidden = !isVisible;
@@ -1395,7 +1476,12 @@
             applyVisualState();
         }
 
-        function toggleObsOutliers() {
+        function toggleObsOutliers(isReapply = false) {
+            if (!isReapply) {
+                activePrefilter = 'obsOut';
+                manualVisibility.clear();
+            }
+            updatePrefilterButtonStyles();
             allHidden = false;
             document.getElementById('toggleAllBtn').innerText = "Hide All Characters";
             const xPct = parseFloat(derivPctInput.value) || 10;
@@ -1445,6 +1531,11 @@
             
             chartInstance.data.datasets.forEach((ds, i) => {
                 if (i < masterDatasets.length) {
+                    if (manualVisibility.has(i)) {
+                        ds.hidden = !manualVisibility.get(i);
+                        chartInstance.getDatasetMeta(i).hidden = ds.hidden;
+                        return;
+                    }
                     const isVisible = indicesToShow.has(i);
                     ds.hidden = !isVisible;
                     chartInstance.getDatasetMeta(i).hidden = !isVisible;
@@ -1453,8 +1544,8 @@
             applyVisualState();
         }
 
-        predBtn.addEventListener('click', togglePredOutliers);
-        obsBtn.addEventListener('click', toggleObsOutliers);
+        predBtn.addEventListener('click', () => togglePredOutliers());
+        obsBtn.addEventListener('click', () => toggleObsOutliers());
 
         // Init
         updateChart();
