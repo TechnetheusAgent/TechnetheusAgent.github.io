@@ -125,6 +125,18 @@
             box-shadow: 0 0 10px rgba(248, 250, 252, 0.4);
             z-index: 1;
         }
+        #shareBtn {
+            background-color: #38bdf8;
+            color: #0f172a;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        #shareBtn:hover {
+            background-color: #7dd3fc;
+        }
+        #shareBtn.hidden {
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -179,6 +191,7 @@
                 <button id="showFallingBtn" style="background-color: #ef4444; color: #f8fafc;">Show Falling Trends</button>
                 <button id="showPredOutliersBtn" style="background-color: #8b5cf6; color: #f8fafc;">10% Pred. Outliers</button>
                 <button id="showObsOutliersBtn" style="background-color: #0d9488; color: #f8fafc;">10% Obs. Outliers</button>
+                <button id="shareBtn" class="hidden">Share View</button>
             </div>
             <div class="controls-grid">
                 <div class="input-group">
@@ -244,7 +257,7 @@
         const liveHp = {"Eq":{"w":9,"sigmaLevelV":0.001,"sigmaDriftV":0.001,"sigmaObsV":0.003,"sigmaLevelA":0.001,"sigmaDriftA":0.001,"sigmaObsA":0.003,"beta":0.5,"alpha":0.25,"phi":0.97},"Pr":{"w":3,"sigmaLevelV":0.001,"sigmaDriftV":0.001,"sigmaObsV":0.003,"sigmaLevelA":0.001,"sigmaDriftA":0.001,"sigmaObsA":0.003,"beta":0,"alpha":0,"phi":1}};
 
         let chartInstance = null;
-        let allHidden = false;
+        let allHidden = false; // Note: 'hidden' prefilter will also set this to true
         let hoveredCharIndex = -1;
         // Legend-hover preview: when a character is hidden by the
         // explicit "shown" state (clicks, sidebar filters), hovering
@@ -278,7 +291,7 @@
         let currentWeighting = 'Eq';
 
         // Track active prefilter and manual legend overrides.
-        let activePrefilter = null; // 'rising' | 'falling' | 'predOut' | 'obsOut' | 'none'
+        let activePrefilter = null; // 'rising' | 'falling' | 'predOut' | 'obsOut' | 'hidden' | 'none'
         const manualVisibility = new Map(); // charIndex -> bool (true=visible, false=hidden)
 
         function updatePrefilterButtonStyles() {
@@ -298,6 +311,89 @@
                 }
             }
         }
+
+        function syncStateToUrl() {
+            const params = new URLSearchParams();
+            if (currentBucket !== 'Vanq') params.set('b', currentBucket);
+            if (currentWeighting !== 'Eq') params.set('w', currentWeighting);
+            if (activePrefilter && activePrefilter !== 'none') params.set('p', activePrefilter);
+            const deriv = document.getElementById('derivPct').value;
+            if (deriv !== '10') params.set('x', deriv);
+            if (document.getElementById('showAllDailyCheck').checked) params.set('d', '1');
+            
+            if (manualVisibility.size > 0) {
+                const vStr = Array.from(manualVisibility.entries())
+                    .map(([idx, vis]) => `${idx}${vis ? 'v' : 'h'}`)
+                    .join(',');
+                params.set('v', vStr);
+            }
+
+            const newUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+            window.history.replaceState(null, '', newUrl);
+
+            // Toggle Share button visibility
+            const shareBtn = document.getElementById('shareBtn');
+            if (params.toString() !== "") {
+                shareBtn.classList.remove('hidden');
+            } else {
+                shareBtn.classList.add('hidden');
+            }
+
+            // Reset if we are back to empty/default params via UI interaction
+            if (params.toString() === "" || (!params.has('v') && !params.has('p'))) {
+                if (activePrefilter !== 'hidden') {
+                    allHidden = false;
+                    document.getElementById('toggleAllBtn').innerText = "Hide All Characters";
+                }
+            }
+        }
+
+        function applyUrlState() {
+            const params = new URLSearchParams(window.location.search);
+            
+            if (params.has('b')) {
+                currentBucket = params.get('b');
+                document.getElementById('bucketSelect').value = currentBucket;
+            }
+            if (params.has('w')) {
+                currentWeighting = params.get('w');
+                document.getElementById('weightingSelect').value = currentWeighting;
+            }
+            if (params.has('p')) {
+                activePrefilter = params.get('p');
+            }
+            if (params.has('x')) {
+                document.getElementById('derivPct').value = params.get('x');
+                updateOutlierLabels();
+            }
+            if (params.has('d')) {
+                document.getElementById('showAllDailyCheck').checked = (params.get('d') === '1');
+            }
+            if (params.has('v')) {
+                allHidden = true; // Default everything to hidden if specific character toggles are provided
+                const vParts = params.get('v').split(',');
+                vParts.forEach(part => {
+                    const match = part.match(/^(\d+)([vh])$/);
+                    if (match) {
+                        manualVisibility.set(parseInt(match[1]), match[2] === 'v');
+                    }
+                });
+            }
+
+            if (params.toString() !== "") {
+                document.getElementById('shareBtn').classList.remove('hidden');
+            }
+        }
+
+        document.getElementById('shareBtn').addEventListener('click', () => {
+            const url = window.location.href;
+            navigator.clipboard.writeText(url).then(() => {
+                const btn = document.getElementById('shareBtn');
+                const origText = btn.innerText;
+                btn.innerText = "Copied!";
+                setTimeout(() => { btn.innerText = origText; }, 2000);
+            });
+        });
         function modeKey() { return currentBucket + currentWeighting; }
         function predictAllChars(anchor, days) {
             return predictAllCharsB(anchor, days);
@@ -936,8 +1032,19 @@
                                     const nowHidden = !ci.data.datasets[index].hidden;
                                     ci.data.datasets[index].hidden = nowHidden;
                                     ci.getDatasetMeta(index).hidden = nowHidden;
+                                    // Manual override is always the opposite of the new hidden state.
                                     manualVisibility.set(index, !nowHidden);
                                 }
+                                
+                                // If we were in a prefilter state and we just manually toggled something
+                                // that was already consistent with the prefilter, we should probably 
+                                // keep the prefilter but track this as a manual override.
+                                // However, if we just toggled the last remaining thing or if we're 
+                                // clearly moving away from the prefilter intent, should we clear it?
+                                // User says: "Character toggles should be applied after all prefilters are applied"
+                                // So we keep activePrefilter as-is.
+                                
+                                syncStateToUrl();
                                 applyVisualState();
                             },
                             // Legend-entry hover behavior:
@@ -1167,7 +1274,10 @@
 
         document.getElementById('predDays').addEventListener('input', updateChart);
         document.getElementById('coneLimit').addEventListener('input', applyVisualState);
-        document.getElementById('showAllDailyCheck').addEventListener('change', applyVisualState);
+        document.getElementById('showAllDailyCheck').addEventListener('change', () => {
+            syncStateToUrl();
+            applyVisualState();
+        });
         // Mode pickers (bucket × weighting). Swaps which (rank, weighting)
         // pair drives the rendered line and the prediction engine. All four
         // pairs are pre-rendered at generation time, so picker changes are pure
@@ -1231,8 +1341,8 @@
                     applyVisualState();
                 }
             }
-            bucketSel.addEventListener('change', () => { currentBucket = bucketSel.value; applyMode(); });
-            weightSel.addEventListener('change', () => { currentWeighting = weightSel.value; applyMode(); });
+            bucketSel.addEventListener('change', () => { currentBucket = bucketSel.value; syncStateToUrl(); applyMode(); });
+            weightSel.addEventListener('change', () => { currentWeighting = weightSel.value; syncStateToUrl(); applyMode(); });
         })();
         
         let currentMinIdx = 0;
@@ -1362,25 +1472,38 @@
             applyVisualState();
         });
 
-        document.getElementById('toggleAllBtn').addEventListener('click', () => {
-            allHidden = !allHidden;
-            activePrefilter = 'none';
-            manualVisibility.clear();
+        function toggleAll(isReapply = false) {
+            if (!isReapply) {
+                // If it's not a reapply, we toggle the overall state.
+                allHidden = !allHidden;
+                activePrefilter = allHidden ? 'hidden' : 'none';
+                manualVisibility.clear();
+                syncStateToUrl();
+            }
             updatePrefilterButtonStyles();
             document.getElementById('toggleAllBtn').innerText = allHidden ? "Show All Characters" : "Hide All Characters";
+            
             chartInstance.data.datasets.forEach((ds, i) => {
                 if (i < masterDatasets.length) {
+                    if (manualVisibility.has(i)) {
+                        ds.hidden = !manualVisibility.get(i);
+                        chartInstance.getDatasetMeta(i).hidden = ds.hidden;
+                        return;
+                    }
                     ds.hidden = allHidden;
                     chartInstance.getDatasetMeta(i).hidden = allHidden;
                 }
             });
             applyVisualState();
-        });
+        }
+
+        document.getElementById('toggleAllBtn').addEventListener('click', () => toggleAll());
 
         function toggleByTrend(isRising, isReapply = false) {
             if (!isReapply) {
                 activePrefilter = isRising ? 'rising' : 'falling';
                 manualVisibility.clear();
+                syncStateToUrl();
             }
             updatePrefilterButtonStyles();
             allHidden = false; 
@@ -1425,11 +1548,17 @@
             obsBtn.innerText = `${x}% Obs. Outliers`;
         }
         derivPctInput.addEventListener('input', updateOutlierLabels);
+        derivPctInput.addEventListener('change', () => {
+            syncStateToUrl();
+            if (activePrefilter === 'predOut') togglePredOutliers(true);
+            else if (activePrefilter === 'obsOut') toggleObsOutliers(true);
+        });
 
         function togglePredOutliers(isReapply = false) {
             if (!isReapply) {
                 activePrefilter = 'predOut';
                 manualVisibility.clear();
+                syncStateToUrl();
             }
             updatePrefilterButtonStyles();
             allHidden = false;
@@ -1479,6 +1608,7 @@
             if (!isReapply) {
                 activePrefilter = 'obsOut';
                 manualVisibility.clear();
+                syncStateToUrl();
             }
             updatePrefilterButtonStyles();
             allHidden = false;
@@ -1547,7 +1677,31 @@
         obsBtn.addEventListener('click', () => toggleObsOutliers());
 
         // Init
+        applyUrlState();
         updateChart();
+        
+        // Re-apply prefilter after initial render if one was in URL
+        if (activePrefilter === 'rising') toggleByTrend(true, true);
+        else if (activePrefilter === 'falling') toggleByTrend(false, true);
+        else if (activePrefilter === 'predOut') togglePredOutliers(true);
+        else if (activePrefilter === 'obsOut') toggleObsOutliers(true);
+        else if (activePrefilter === 'hidden') toggleAll(true);
+        
+        if (manualVisibility.size > 0) {
+            chartInstance.data.datasets.forEach((ds, i) => {
+                if (i < masterDatasets.length && manualVisibility.has(i)) {
+                    ds.hidden = !manualVisibility.get(i);
+                    chartInstance.getDatasetMeta(i).hidden = ds.hidden;
+                }
+            });
+            
+            // If allHidden was set because of URL params, ensure the button text is correct
+            if (allHidden) {
+                document.getElementById('toggleAllBtn').innerText = "Show All Characters";
+            }
+            
+            applyVisualState();
+        }
     </script>
 </body>
 </html>
