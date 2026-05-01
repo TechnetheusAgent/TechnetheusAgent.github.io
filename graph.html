@@ -586,11 +586,15 @@
             }
 
             // 6. Y-axis bounds (base lines only). Exclude the legend-
-            // hover-previewed character so the Y axis doesn't rescale
-            // while the user is just peeking — preview is meant to
-            // be visually constant, not zoom-disruptive. The line
-            // still renders; only its values are skipped from bounds.
-            const visibleBaseDs = baseDatasets.filter((ds, i) => !ds.hidden && i !== previewedCharIndex);
+            // hover-previewed character ONLY when preview is actively
+            // un-hiding a previously hidden char — those values
+            // shouldn't rescale the axis. If the previewed char was
+            // already visible (savedHidden=false), preview is a
+            // visual no-op and we must include its values normally,
+            // otherwise hovering an already-visible extreme char
+            // (e.g. lowest-WR) makes the axis snap.
+            const visibleBaseDs = baseDatasets.filter((ds, i) =>
+                !ds.hidden && !(i === previewedCharIndex && previewedSavedHidden));
             const allY = visibleBaseDs.flatMap(ds => {
                 // In JS mode the rendered ds.data is truncated to the scrubbing anchor,
                 // so reading it for Y bounds causes rescaling flicker when the anchor
