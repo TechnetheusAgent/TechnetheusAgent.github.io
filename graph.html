@@ -138,24 +138,24 @@ details.info-panel p { margin: 6px 0; font-size: 13px; color: #cbd5e1; line-heig
         <details class="info-panel">
             <summary>How to use this chart</summary>
             <div class="panel-body">
-                <h3>Picking what to look at</h3>
-                <p><strong>Hover a line</strong> → focuses that character and reveals their Mastery Gap and Meta Skew overlays (see the visual key below).</p>
-                <p><strong>Click a name in the legend</strong> → hides or shows that character.</p>
-                <p><strong>Hide All / Show All</strong> → clears the chart, or brings everyone back. Use this to build a clean side-by-side comparison.</p>
-                <p><strong>Show Rising / Falling Trends</strong> → only shows the characters the forecast says are climbing or sliding the most.</p>
-                <p><strong>X% Pred. / Obs. Outliers</strong> → only shows the characters making the biggest moves. <em>Pred.</em> uses the forecast; <em>Obs.</em> uses recent real history. Change the <strong>X%</strong> to widen or tighten the cutoff.</p>
+                <h3>Interaction</h3>
+                <p><strong>Hover a line</strong> → focuses that character; shows its Mastery Gap and Meta Skew overlays.</p>
+                <p><strong>Hover a legend name</strong> → previews a hidden character without toggling it on. <strong>Click</strong> the name to lock it visible (or hide it again).</p>
+                <p><strong>Mouse drag</strong> → pans the time axis. <strong>Scroll wheel</strong> → zooms in/out (up to 10×). <strong>Double-click</strong> → resets zoom.</p>
 
-                <h3>Zooming and time travel</h3>
-                <p><strong>Mouse wheel</strong> over the chart → zooms into the time window under the cursor (up to 10×). <strong>Double-click</strong> the chart to reset.</p>
-                <p><strong>Hover any past day on a line</strong> → "rewinds" the forecast: the dashed projection is redrawn as if you were standing on that day, using only the data that existed back then. Lets you see what the model <em>would have predicted</em> at any point in the past.</p>
+                <h3>Filters</h3>
+                <p><strong>Hide All / Show All</strong> → clears the chart or restores everyone; useful for building a custom comparison.</p>
+                <p><strong>Rising / Falling Trends</strong> → isolates characters the forecast says are climbing or sliding most.</p>
+                <p><strong>X% Pred. / Obs. Outliers</strong> → top X% movers by forecast (<em>Pred.</em>) or recent history (<em>Obs.</em>). Adjust <strong>X%</strong> to widen/tighten.</p>
 
-                <h3>Forecast controls</h3>
-                <p><strong>Prediction Days</strong> → how far ahead to project. 0 shows history only; higher values show the dashed forecast and its uncertainty cone.</p>
-                <p><strong>Cones ≤ N chars</strong> → when N or fewer characters are visible, each gets its own colour-matched uncertainty band. Raise N to see more bands at once.</p>
+                <h3>Controls</h3>
+                <p><strong>Prediction Days</strong> → forecast horizon. 0 = history only.</p>
+                <p><strong>Cones ≤ N chars</strong> → show per-character uncertainty bands when ≤ N characters are visible.</p>
+                <p><strong>Daily WRs</strong> → overlay raw (unsmoothed) daily win-rate lines for visible characters.</p>
 
-                <h3>Switching data source</h3>
-                <p><strong>Bucket</strong> → toggles between <em>Vanquisher</em> (the top ~4% of players) and <em>All-rank</em> (everyone). The forecast engine is the same; only the underlying win-rate series changes.</p>
-                <p><strong>Weighting</strong> → toggles how matchups are combined. <em>Even</em> (default) treats every matchup equally — pure character strength assuming you face every opponent the same amount. <em>Pick-rate weighted</em> emphasises the matchups that actually happen often — your <em>expected</em> win rate in the current meta.</p>
+                <h3>Data source</h3>
+                <p><strong>Bucket</strong> → <em>Vanquisher</em> (top ~4%) or <em>All-rank</em> (everyone).</p>
+                <p><strong>Weighting</strong> → <em>Flat</em> = every matchup equal (pure character strength). <em>Pickrate</em> = popular matchups weigh more (expected meta performance).</p>
             </div>
         </details>
 
@@ -163,16 +163,16 @@ details.info-panel p { margin: 6px 0; font-size: 13px; color: #cbd5e1; line-heig
             <summary>What the lines and numbers mean</summary>
             <div class="panel-body">
                 <h3>Visual key</h3>
-                <p><strong>Solid line</strong> → historical win rate. <strong>Dashed line</strong> → forecast. <strong>Shaded area</strong> → uncertainty range around the forecast. <strong>White line (on hover)</strong> → Mastery Gap. <strong>Black line (on hover)</strong> → Meta Skew.</p>
+                <p><strong>Solid line</strong> → smoothed historical win rate. <strong>Dashed line</strong> → forecast. <strong>Shaded cone</strong> → ±1 σ uncertainty. <strong>Thin dotted line</strong> → raw daily win rate (toggle via <em>Daily WRs</em>). <strong>White line (on hover)</strong> → Mastery Gap. <strong>Black line (on hover)</strong> → Meta Skew.</p>
 
-                <h3>The metrics, in plain English</h3>
-                <p><strong>Tier Score</strong> → the character's average matchup win rate. The <em>Weighting</em> picker decides how matchups are combined: <em>Even</em> = simple average across all matchups (pure character strength); <em>Pick-rate weighted</em> = popular matchups count more (expected meta performance). 50% is perfectly balanced; above is favoured, below is unfavoured.</p>
-                <p><strong>Mastery Gap</strong> → how much better top players do with this character than average players do. <em>Positive</em>: rewards skill — gets stronger in better hands. <em>Negative</em>: a "pubstomper" — falls off at high level. <em>Near zero</em>: works the same at any rank.</p>
-                <p><strong>Meta Skew</strong> → whether the character's matchup spread is lopsided. <em>Positive</em>: bullies a few popular opponents (meta bully). <em>Negative</em>: gets countered by a few popular opponents (kryptonite pressure). <em>Near zero</em>: matchup spread is even, regardless of who's popular.</p>
+                <h3>Metrics</h3>
+                <p><strong>Tier Score</strong> → average matchup win rate. 50% = balanced; above = favoured. Weighting mode controls how matchups combine.</p>
+                <p><strong>Mastery Gap</strong> → Vanquisher WR minus All-rank WR. Positive = rewards skill. Negative = "pubstomper." Near zero = rank-agnostic.</p>
+                <p><strong>Meta Skew</strong> → how lopsided the matchup spread is against popular opponents. Positive = meta bully. Negative = gets hard-countered by popular picks.</p>
 
-                <h3>How the forecast works (briefly)</h3>
-                <p><strong>Forecast</strong> → blends two forces: <em>momentum</em> (recent direction continues for a while) and <em>equilibrium</em> (extreme scores get pulled back toward 50% over time). It's a short-horizon read — trust shrinks the further out you look.</p>
-                <p><strong>Uncertainty bounds</strong> → a one-standard-deviation range. Grows quickly at first, then levels off — characters can't drift forever, so the cone doesn't either. Wider for volatile characters, narrower for stable ones.</p>
+                <h3>Forecast model</h3>
+                <p>Blends <em>momentum</em> (recent trend continues) and <em>mean-reversion</em> (extremes pull toward 50%). Uncertainty cone grows then plateaus — volatile characters get wider bands.</p>
+                <p><strong>Tooltip values:</strong> <em>Rank</em> = tier-score position at that date. <em>PR#</em> = pick-rate rank. <em>(interp.)</em> = data point was interpolated, not observed. <em>drift</em> = estimated daily WR change. <em>σ</em> = 1-step forecast uncertainty. <em>NIS</em> = normalized innovation squared (model-fit diagnostic; ~1 = well-calibrated). <em>β</em> = pick-rate shift coefficient. <em>α</em> = cross-bucket coupling (Vanq↔All). <em>φ</em> = mean-reversion strength.</p>
             </div>
         </details>
 
