@@ -1208,6 +1208,8 @@
                 // Sync the swapped master data into the active chart datasets before 
                 // re-applying filters, otherwise the filter logic (which reads from 
                 // chartInstance) or the visual render will still be using the old bucket's values.
+                // For weighting changes, we must force a full chart rebuild because 
+                // the Kalman coefficients and predictions change, which updateChart handles.
                 updateChart();
 
                 // Re-apply prefilter if one is active.
@@ -1218,9 +1220,6 @@
                 else {
                     updatePrefilterButtonStyles();
                     // If no prefilter, we still need to respect manual overrides
-                    // but characters not in manualVisibility might need default state?
-                    // Usually if no prefilter was active, and user just swapped buckets,
-                    // we keep whatever was there.
                     if (manualVisibility.size > 0) {
                         chartInstance.data.datasets.forEach((ds, i) => {
                             if (i < masterDatasets.length && manualVisibility.has(i)) {
@@ -1229,8 +1228,6 @@
                             }
                         });
                     }
-                    // updateChart() already called above, but we need one final render
-                    // if we changed visibility in this branch.
                     applyVisualState();
                 }
             }
@@ -1397,9 +1394,10 @@
                         return;
                     }
                     const data = ds.data;
-                    if (data.length > currentHistLen) {
-                        const histLast = data[currentHistLen - 1] && data[currentHistLen - 1].y;
-                        const predFirst = data[currentHistLen] && data[currentHistLen].y;
+                    const histIdx = currentHistLen - 1 - startIdx;
+                    if (data.length > histIdx + 1) {
+                        const histLast = data[histIdx] && data[histIdx].y;
+                        const predFirst = data[histIdx + 1] && data[histIdx + 1].y;
                         const isMatch = (histLast != null && predFirst != null)
                             ? (isRising ? (predFirst > histLast) : (predFirst < histLast))
                             : false;
@@ -1439,11 +1437,12 @@
             const xPct = parseFloat(derivPctInput.value) || 10;
             
             const deltas = [];
+            const histIdx = currentHistLen - 1 - startIdx;
             for (let i = 0; i < masterDatasets.length; i++) {
                 const data = chartInstance.data.datasets[i].data;
-                if (data.length > currentHistLen) {
-                    const histLast = data[currentHistLen - 1] && data[currentHistLen - 1].y;
-                    const predFirst = data[currentHistLen] && data[currentHistLen].y;
+                if (data.length > histIdx + 1) {
+                    const histLast = data[histIdx] && data[histIdx].y;
+                    const predFirst = data[histIdx + 1] && data[histIdx + 1].y;
                     if (histLast != null && predFirst != null) {
                         deltas.push({
                             index: i,
