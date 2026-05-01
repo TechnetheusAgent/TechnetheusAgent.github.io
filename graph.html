@@ -831,14 +831,17 @@
                                             const label = wr != null
                                                 ? ds.label + '  ' + wr.toFixed(2) + '%'
                                                 : ds.label;
+                                            const isHidden = !!ds.hidden;
+                                            const color = ds._origColor || ds.borderColor;
+                                            const legendColor = isHidden ? hexToRgba(color, 0.5) : color;
                                             return {
                                                 text: label,
                                                 _wr: wr,
                                                 datasetIndex: i,
-                                                fillStyle: ds._origColor || ds.borderColor,
-                                                strokeStyle: ds._origColor || ds.borderColor,
-                                                hidden: !!ds.hidden,
-                                                fontColor: '#cbd5e1',
+                                                fillStyle: legendColor,
+                                                strokeStyle: legendColor,
+                                                hidden: isHidden,
+                                                fontColor: isHidden ? 'rgba(203, 213, 225, 0.5)' : '#cbd5e1',
                                                 lineWidth: 2,
                                             };
                                         });
