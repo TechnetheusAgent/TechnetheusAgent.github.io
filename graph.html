@@ -233,21 +233,20 @@
         // {w, σ_*, β, α, φ} object instead (the engine isn't run).
         const liveHp = {"Eq":{"w":9,"sigmaLevelV":0.001,"sigmaDriftV":0.001,"sigmaObsV":0.003,"sigmaLevelA":0.001,"sigmaDriftA":0.001,"sigmaObsA":0.003,"beta":0.5,"alpha":0.25,"phi":0.97},"Pr":{"w":3,"sigmaLevelV":0.001,"sigmaDriftV":0.001,"sigmaObsV":0.003,"sigmaLevelA":0.001,"sigmaDriftA":0.001,"sigmaObsA":0.003,"beta":0,"alpha":0,"phi":1}};
 
-        // Hard-anchor the tooltip to the top-left corner of the chart area so it
-        // never obscures the prediction lines that extend to the right of the cursor.
-        Chart.Tooltip.positioners.topLeft = function(elements, eventPosition) {
-            const chart = this.chart;
-            return {
-                x: chart.chartArea.left + 8,
-                y: chart.chartArea.top  + 8,
-                xAlign: 'left',
-                yAlign: 'top',
-            };
-        };
-
         let chartInstance = null;
         let allHidden = false;
         let hoveredCharIndex = -1;
+        // Legend-hover preview: when a character is hidden by the
+        // explicit "shown" state (clicks, sidebar filters), hovering
+        // its legend entry temporarily un-hides it so the user can
+        // peek at its data alongside whatever's currently shown.
+        // On leave, the dataset's hidden flag is restored from
+        // previewedSavedHidden (the value before the preview began).
+        // If the user clicks a previewed-char's legend entry, the
+        // preview is "locked" — savedHidden is updated to false so
+        // leave doesn't re-hide it.
+        let previewedCharIndex = -1;
+        let previewedSavedHidden = false;
         // Scrubbing anchor for JS-side prediction. Defaults to latest snapshot.
         // Hovering a historical datapoint shifts the anchor back in time so you
         // can replay what the forecast looked like from that vantage point.
@@ -548,27 +547,33 @@
                 }
             }
 
-            // 5. Gap / Skew / RawDaily context overlays for focused character
+            // 5. Mastery winrate gap / Meta advantage / Daily winrate overlays
+            // for focused character. Each point carries `delta` (the
+            // raw +/- value before chart-placement offset) so the
+            // tooltip can render the actual quantity rather than the
+            // line's plotted y-coordinate.
             if (focusIdx !== -1) {
                 const focusDs = baseDatasets[focusIdx];
                 gapDs.hidden  = false;
                 skewDs.hidden = false;
-                gapDs.label   = focusDs.label + ' [Gap Baseline]';
-                skewDs.label  = focusDs.label + ' [Skew Force]';
-                gapDs.data  = focusDs.data.map((pt, i) =>
-                    ({x: pt.x, y: pt.y !== null && focusDs.gaps?.[i] != null
-                        ? pt.y + focusDs.gaps[i] : null}));
-                skewDs.data = focusDs.data.map((pt, i) =>
-                    ({x: pt.x, y: pt.y !== null && focusDs.skews?.[i] != null
-                        ? pt.y + focusDs.skews[i] : null}));
-                // Raw daily WR for the focused character: dotted line
-                // matching the char's color, showing actual day-to-day
-                // observations (vs the smoothed Bayesian level on the
-                // main line). Forecast region has null rawDaily values
-                // so the line naturally stops at the seam.
+                gapDs.label   = focusDs.label + ' [Mastery winrate gap]';
+                skewDs.label  = focusDs.label + ' [Meta advantage]';
+                gapDs.data = focusDs.data.map((pt, i) => ({
+                    x: pt.x,
+                    y: pt.y !== null && focusDs.gaps?.[i] != null ? pt.y + focusDs.gaps[i] : null,
+                    delta: focusDs.gaps?.[i] ?? null,
+                }));
+                skewDs.data = focusDs.data.map((pt, i) => ({
+                    x: pt.x,
+                    y: pt.y !== null && focusDs.skews?.[i] != null ? pt.y + focusDs.skews[i] : null,
+                    delta: focusDs.skews?.[i] ?? null,
+                }));
+                // Daily winrate: dotted line in focused char's color.
+                // Plotted at the actual daily WR value (not an offset),
+                // so its tooltip y IS the value to display.
                 const focusColor = focusDs._origColor || focusDs.borderColor;
                 rawDailyDs.hidden = false;
-                rawDailyDs.label  = focusDs.label + ' [Raw Daily]';
+                rawDailyDs.label  = focusDs.label + ' [Daily winrate]';
                 rawDailyDs.borderColor = focusColor;
                 rawDailyDs.pointBackgroundColor = focusColor;
                 rawDailyDs.pointBorderColor = focusColor;
@@ -580,8 +585,12 @@
                 rawDailyDs.hidden = true;
             }
 
-            // 6. Y-axis bounds (base lines only)
-            const visibleBaseDs = baseDatasets.filter(ds => !ds.hidden);
+            // 6. Y-axis bounds (base lines only). Exclude the legend-
+            // hover-previewed character so the Y axis doesn't rescale
+            // while the user is just peeking — preview is meant to
+            // be visually constant, not zoom-disruptive. The line
+            // still renders; only its values are skipped from bounds.
+            const visibleBaseDs = baseDatasets.filter((ds, i) => !ds.hidden && i !== previewedCharIndex);
             const allY = visibleBaseDs.flatMap(ds => {
                 // In JS mode the rendered ds.data is truncated to the scrubbing anchor,
                 // so reading it for Y bounds causes rescaling flicker when the anchor
@@ -725,33 +734,38 @@
             });
 
             // Context datasets for focused-character Gap and Skew overlays (at 3N, 3N+1).
+            // Three on-focus overlays share a common compact dotted style
+            // (dash [1,3], width 1, small points, no smoothing) so they
+            // read as secondary information against the primary line.
+            // Colors disambiguate: white = top-rank edge (mastery gap),
+            // black = matchup tilt (meta skew), char color = daily WR.
             currentDatasets.push({
-                label: 'Mastery Gap (All-Ranks Baseline)',
+                label: 'Mastery winrate gap',
+                _kind: 'gap',
                 data: currentLabels.map(x => ({x, y: null})),
                 borderColor: '#ffffff',
-                backgroundColor: '#ffffff',
-                borderDash: [5, 5],
-                borderWidth: 2,
+                backgroundColor: 'rgba(0,0,0,0)',
+                borderDash: [1, 3],
+                borderWidth: 1,
+                pointRadius: 2,
                 hidden: true,
-                tension: 0.3
+                tension: 0,
             });
             currentDatasets.push({
-                label: 'Meta Skew (Volatile Force)',
+                label: 'Meta advantage',
+                _kind: 'skew',
                 data: currentLabels.map(x => ({x, y: null})),
                 borderColor: '#000000',
-                backgroundColor: '#000000',
-                borderDash: [2, 2],
-                borderWidth: 2,
+                backgroundColor: 'rgba(0,0,0,0)',
+                borderDash: [1, 3],
+                borderWidth: 1,
+                pointRadius: 2,
                 hidden: true,
-                tension: 0.3
+                tension: 0,
             });
-            // Raw daily WR overlay for the focused character (at 3N+2).
-            // Smoothed level (the visible main line) hides daily noise;
-            // this overlay reveals the actual day-to-day observations
-            // the filter saw on hover/focus. Color/style set per-focus
-            // in applyVisualState to match the focused char's color.
             currentDatasets.push({
-                label: 'Raw Daily WR',
+                label: 'Daily winrate',
+                _kind: 'rawDaily',
                 data: currentLabels.map(x => ({x, y: null})),
                 borderColor: '#888888',
                 backgroundColor: 'rgba(0,0,0,0)',
@@ -781,41 +795,14 @@
                     },
                     onHover: (e, elements) => {
                         let newHoverIdx = -1;
-                        let newAnchor = historyCount - 1;
                         if (elements.length > 0) {
                             let dsIdx = elements[0].datasetIndex;
                             if (dsIdx < masterDatasets.length) {
                                 newHoverIdx = dsIdx;
                             }
-                            // JS-mode prediction scrubbing: anchor moves to the hovered
-                            // datapoint's historical index (clamped; forecast points
-                            // don't back-scrub further).
-                            if (!STATIC_FCAST) {
-                                const ptIdx = elements[0].index + startIdx;
-                                if (ptIdx != null && ptIdx < historyCount) {
-                                    // Clamp anchor so predictAllChars always has at least
-                                    // two real (non-interpolated) snapshots to work from.
-                                    // Without this, index 0/1 can land with <2 reals and
-                                    // the forecast silently disappears, causing a flicker.
-                                    let minViableAnchor = 0;
-                                    let realCount = 0;
-                                    for (let k = 0; k < historyCount; k++) {
-                                        if (!interpolationFlags[k]) realCount++;
-                                        if (realCount >= 2) { minViableAnchor = k; break; }
-                                    }
-                                    newAnchor = Math.max(ptIdx, minViableAnchor);
-                                } else {
-                                    newAnchor = anchorIdx;
-                                }
-                            }
                         }
-                        const anchorChanged = !STATIC_FCAST && (newAnchor !== anchorIdx);
-                        const hoverChanged = (hoveredCharIndex !== newHoverIdx);
-                        if (anchorChanged) anchorIdx = newAnchor;
-                        if (hoverChanged) hoveredCharIndex = newHoverIdx;
-                        if (anchorChanged) {
-                            updateChart();
-                        } else if (hoverChanged) {
+                        if (hoveredCharIndex !== newHoverIdx) {
+                            hoveredCharIndex = newHoverIdx;
                             applyVisualState();
                         }
                     },
@@ -866,18 +853,54 @@
                                 const index = legendItem.datasetIndex;
                                 if (index >= masterDatasets.length) return;
                                 const ci = legend.chart;
-                                const nowHidden = !ci.data.datasets[index].hidden;
-                                ci.data.datasets[index].hidden = nowHidden;
-                                ci.getDatasetMeta(index).hidden = nowHidden;
+                                // Snapshot whether preview was actually un-hiding
+                                // a hidden char (vs hovering an already-visible one
+                                // where preview is a no-op). Clear preview tracking
+                                // unconditionally so leave events don't undo the click.
+                                let previewWasUnhiding = false;
+                                if (previewedCharIndex === index) {
+                                    previewWasUnhiding = previewedSavedHidden;
+                                    previewedCharIndex = -1;
+                                    previewedSavedHidden = false;
+                                }
+                                if (previewWasUnhiding) {
+                                    // Lock the preview as an explicit show.
+                                    ci.data.datasets[index].hidden = false;
+                                    ci.getDatasetMeta(index).hidden = false;
+                                } else {
+                                    // Normal toggle from current visible state.
+                                    const nowHidden = !ci.data.datasets[index].hidden;
+                                    ci.data.datasets[index].hidden = nowHidden;
+                                    ci.getDatasetMeta(index).hidden = nowHidden;
+                                }
                                 applyVisualState();
                             },
-                            // Mirror line-hover focus when the cursor is over a legend
-                            // entry: pointer cursor + the same character-isolation visual
-                            // state the chart applies on direct line hover.
+                            // Legend-entry hover behavior:
+                            //  - Pointer cursor + character-isolation focus state
+                            //    (existing, mirrors direct line hover).
+                            //  - If the character is currently hidden by the
+                            //    explicit "shown" state, temporarily un-hide it
+                            //    so its line shows alongside the visible chars.
+                            //    Restored on leave unless click locks it.
                             onHover: function(e, legendItem, legend) {
                                 const index = legendItem.datasetIndex;
                                 if (index >= masterDatasets.length) return;
                                 legend.chart.canvas.style.cursor = 'pointer';
+                                const ci = legend.chart;
+                                if (previewedCharIndex !== index) {
+                                    // Restore previously previewed char (if any)
+                                    // before adopting the new preview target.
+                                    if (previewedCharIndex !== -1) {
+                                        ci.data.datasets[previewedCharIndex].hidden = previewedSavedHidden;
+                                        ci.getDatasetMeta(previewedCharIndex).hidden = previewedSavedHidden;
+                                    }
+                                    previewedCharIndex = index;
+                                    previewedSavedHidden = ci.data.datasets[index].hidden;
+                                    if (previewedSavedHidden) {
+                                        ci.data.datasets[index].hidden = false;
+                                        ci.getDatasetMeta(index).hidden = false;
+                                    }
+                                }
                                 if (hoveredCharIndex !== index) {
                                     hoveredCharIndex = index;
                                     applyVisualState();
@@ -885,6 +908,13 @@
                             },
                             onLeave: function(e, legendItem, legend) {
                                 legend.chart.canvas.style.cursor = 'default';
+                                const ci = legend.chart;
+                                if (previewedCharIndex !== -1) {
+                                    ci.data.datasets[previewedCharIndex].hidden = previewedSavedHidden;
+                                    ci.getDatasetMeta(previewedCharIndex).hidden = previewedSavedHidden;
+                                    previewedCharIndex = -1;
+                                    previewedSavedHidden = false;
+                                }
                                 if (hoveredCharIndex !== -1) {
                                     hoveredCharIndex = -1;
                                     applyVisualState();
@@ -892,7 +922,7 @@
                             }
                         },
                         tooltip: {
-                            position: 'topLeft',
+                            position: 'average',
                             backgroundColor: 'rgba(15, 23, 42, 0.95)',
                             titleColor: '#38bdf8',
                             bodyColor: '#f1f5f9',
@@ -909,7 +939,28 @@
                                     let label = ds.label || '';
                                     if (label.includes('_cone_')) return null;
                                     let lines = [];
-                                    
+
+                                    // Friendly labels for the three on-focus overlay lines.
+                                    // Show their actual +/- value (the underlying delta)
+                                    // rather than the chart-placement y-coordinate.
+                                    const fmtSigned = (v, dec, suffix) =>
+                                        (v >= 0 ? '+' : '') + v.toFixed(dec) + (suffix || '');
+                                    if (ds._kind === 'gap') {
+                                        const d = context.raw && context.raw.delta;
+                                        if (d != null) lines.push('Mastery winrate gap: ' + fmtSigned(d, 2, '%'));
+                                        return lines;
+                                    }
+                                    if (ds._kind === 'skew') {
+                                        const d = context.raw && context.raw.delta;
+                                        if (d != null) lines.push('Meta advantage: ' + fmtSigned(d, 2, '%'));
+                                        return lines;
+                                    }
+                                    if (ds._kind === 'rawDaily') {
+                                        const v = context.parsed && context.parsed.y;
+                                        if (v != null) lines.push('Daily winrate: ' + v.toFixed(2) + '%');
+                                        return lines;
+                                    }
+
                                     if (context.parsed.y !== null && !isNaN(context.parsed.y)) {
                                         let wr = context.parsed.y.toFixed(2) + '%';
                                         if (context.dataIndex < currentHistLen && interpolationFlags[context.dataIndex]) {
@@ -930,9 +981,9 @@
                                             const prRanks = currentBucket === 'Vanq' ? ds.prRanksV : ds.prRanksA;
                                             const prRnk = prRanks ? (prRanks[context.dataIndex] ?? null) : null;
                                             const prStr = prRnk != null ? '  PR#' + prRnk : '';
-                                            lines.push(label + ': ' + wr + ' (Rank ' + rnk + prStr + ')');
+                                            lines.push(label + ': WR Trend ' + wr + ' (Rank ' + rnk + prStr + ')');
                                         } else {
-                                            lines.push(label + ': ' + wr);
+                                            lines.push(label + ': WR Trend ' + wr);
                                         }
                                         
                                         if (context.dataIndex >= currentHistLen && ds.mins && ds.maxs) {
@@ -941,23 +992,18 @@
                                             lines.push('   Range: ' + minVal + ' - ' + maxVal);
                                         }
 
-                                        // Raw daily WR observation (the unsmoothed value the
-                                        // filter saw at this snapshot — visible main line is
-                                        // the Kalman-smoothed level instead). Only meaningful
-                                        // in the historical region; null in forecasts.
-                                        if (ds.rawDaily && context.dataIndex < currentHistLen) {
-                                            const rd = ds.rawDaily[context.dataIndex];
-                                            if (rd != null) {
-                                                lines.push('   Raw daily: ' + rd.toFixed(2) + '%');
-                                            }
-                                        }
-
+                                        // ELI5: gap = "mastery winrate gap" (positive =
+                                        // does better at the top of the ladder than the
+                                        // average rank); skew = "meta advantage" (positive
+                                        // = bullies popular opponents, negative = countered
+                                        // by them).
                                         const gap = ds.gaps ? ds.gaps[context.dataIndex] : null;
                                         const skew = ds.skews ? ds.skews[context.dataIndex] : null;
-                                        
                                         let details = "   ";
-                                        if (gap !== null && gap !== undefined) details += "Gap: " + gap.toFixed(2) + "%  |  ";
-                                        if (skew !== null && skew !== undefined) details += "Skew: " + skew.toFixed(3);
+                                        if (gap !== null && gap !== undefined)
+                                            details += "Mastery winrate gap: " + fmtSigned(gap, 2, '%') + "  |  ";
+                                        if (skew !== null && skew !== undefined)
+                                            details += "Meta advantage: " + fmtSigned(skew, 2, '%');
                                         if (details.trim().length > 0) lines.push(details);
 
                                         // Kalman per-character summary at the latest filtered state.
